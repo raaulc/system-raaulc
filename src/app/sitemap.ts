@@ -4,7 +4,7 @@ import { DATA } from "@/data/resume";
 import fs from 'fs';
 import path from 'path';
 
-const baseUrl = 'https://prasen.dev';
+const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://raaulc.dev';
 
 export const revalidate = 86400; // Revalidate once per day
 
@@ -16,7 +16,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const getFileModDate = (filePath: string) => {
     try {
       const stats = fs.statSync(path.join(process.cwd(), filePath));
-      return new Date(stats.mtime);
+      const date = new Date(stats.mtime);
+      // Validate the date
+      if (isNaN(date.getTime())) {
+        return new Date();
+      }
+      return date;
     } catch (e) {
       return new Date();
     }
@@ -63,12 +68,25 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   // Add blog posts to sitemap
-  const blogPosts = posts.map((post) => ({
-    url: `${baseUrl}/blog/${post.slug}`,
-    lastModified: new Date(post.metadata.publishedAt),
-    changeFrequency: 'monthly' as const,
-    priority: 0.6,
-  }));
+  const blogPosts = posts.map((post) => {
+    let lastModified: Date;
+    try {
+      lastModified = new Date(post.metadata.publishedAt);
+      // Validate the date
+      if (isNaN(lastModified.getTime())) {
+        lastModified = new Date();
+      }
+    } catch (e) {
+      lastModified = new Date();
+    }
+    
+    return {
+      url: `${baseUrl}/blog/${post.slug}`,
+      lastModified,
+      changeFrequency: 'monthly' as const,
+      priority: 0.6,
+    };
+  });
 
   return [...routes, ...blogPosts];
 }

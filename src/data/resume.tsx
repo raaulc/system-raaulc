@@ -418,7 +418,7 @@ export const DATA = {
     {
       title: "System Design for High-Scale Backend Services",
       href: "https://medium.com/@raaulc/system-design-backend-services",
-      date: "2024-08-20",
+      date: "2024-02-20",
       summary: "Comprehensive guide to designing scalable backend systems with practical patterns for high-concurrency applications, covering architecture decisions, trade-offs, and real-world implementation strategies.",
       image: "/blog-images/system-design.svg"
     }
