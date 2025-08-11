@@ -1,0 +1,47 @@
+---
+title: "Redis Caching Patterns for High-Performance Backend Services"
+date: "2024-03-30"
+summary: "How Redis caching patterns reduced API latency from 900ms to under 200ms, cut database load by 60%, and eliminated peak-time errors. Real strategies for read-through, write-through, and cache-aside patterns."
+---
+
+It was a Friday afternoon when the alert came in:
+
+"Search API latency has doubled. Customer drop-offs increasing."
+
+In high-traffic systems, every millisecond matters. And in our case, milliseconds were turning into seconds. The backend was hammering the database for the same data over and over — like asking the same question to someone who had already answered a minute ago.
+
+That's when Redis stepped in as our secret weapon.
+
+## The Problem
+
+Our service was handling:
+
+- **Thousands of requests per second**
+- **Frequent lookups for data that changed infrequently**
+- **A growing number of timeout errors under peak load**
+
+Hitting the database every time was like taking the long road home when a shortcut was available.
+
+## The Redis Approach
+
+We introduced caching patterns to break the cycle:
+
+- **Read-Through Cache** – Data fetched from the DB was stored in Redis automatically for future requests
+- **Write-Through Cache** – Updates went to both the DB and Redis at the same time, keeping them in sync
+- **Cache-aside** – For infrequent writes but heavy reads, we let the app decide when to pull from Redis or refresh from DB
+
+We also set smart TTLs — short enough to keep data fresh, long enough to avoid unnecessary DB hits.
+
+## The Results
+
+- **Latency dropped from ~900ms to under 200ms** for common queries
+- **Database load reduced by 60%**, freeing it to handle truly dynamic data
+- **Peak-time errors? Almost gone**
+
+## The Takeaway
+
+Redis isn't just a cache — it's a performance strategy.
+
+It can turn an overworked backend into a responsive, high-performing system, provided you choose the right caching pattern for your data's behavior.
+
+And the best part? When we deployed these patterns, customers didn't notice anything — except that everything just felt faster.

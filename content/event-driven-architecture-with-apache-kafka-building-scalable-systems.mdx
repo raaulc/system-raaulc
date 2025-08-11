@@ -1,0 +1,63 @@
+---
+title: "Event-Driven Architecture with Apache Kafka: Building Scalable Systems"
+date: "2024-05-15"
+summary: "How we transformed a synchronous request/response system into a decoupled, fault-tolerant event-driven architecture. Achieved 99.99% uptime, processed 3x more events per second, and gained the power of event replay."
+---
+
+It was Friday afternoon — the kind of time when you expect things to be quiet.
+
+Instead, our system lit up like a Christmas tree. API calls were spiking, new user signups were flooding in, and real-time analytics were lagging minutes behind. In a business where seconds matter, minutes were a lifetime.
+
+## The Problem
+
+We were running a request/response system that tried to do everything in real time. Every new event — whether it was a driver's speed update, a claim submission, or a policy change — triggered a chain reaction of downstream calls.
+
+When one part slowed down, everything slowed down.
+
+We needed a decoupled, fault-tolerant system that could:
+
+- **Handle massive bursts of data** without breaking
+- **Let downstream services process events** at their own pace
+- **Keep track of what happened**, even if a consumer was down for hours
+
+## Enter Apache Kafka
+
+Kafka became the backbone of our new architecture. Instead of firing requests directly, services began publishing events to Kafka topics:
+
+- **Producer services** broadcast what happened
+- **Consumer services** subscribed to the events they cared about
+- **Everything was stored durably** — no more "missed" updates
+
+## The Transition
+
+Our first target was the real-time scoring system for driver behavior.
+
+The old flow was synchronous — every speed change or GPS update tried to hit the scoring service directly. Under load, it choked.
+
+With Kafka:
+
+- **GPS and telematics data** were published to partitioned topics
+- **Multiple scoring consumers** worked in parallel, each handling its own share
+- **Results were cached in Redis** for lightning-fast API retrieval
+- **Metrics from Prometheus** showed consumer lag, error counts, and throughput
+
+## The Results
+
+- **99.99% uptime** even under heavy bursts
+- **The scoring service could be deployed, restarted, or scaled independently** — without losing events
+- **We processed 3x more events per second** with fewer infrastructure headaches
+
+## Lessons Learned
+
+1. **Loose coupling is power.** When services talk via events, they can evolve without breaking each other
+2. **Backpressure matters.** Kafka lets consumers process at their own pace without overwhelming them
+3. **Replay is gold.** If a bug slips in, you can replay events to reprocess them — no manual database surgery
+4. **Monitoring is non-negotiable.** Consumer lag alerts saved us from invisible slowdowns
+
+## Final Thought
+
+Kafka turned our system from a tangled web of dependencies into a flow of independent, resilient services.
+
+In high-volume environments, it's not just about processing data fast — it's about processing it predictably under any load.
+
+Event-driven architecture gives you that predictability. Kafka makes it real.

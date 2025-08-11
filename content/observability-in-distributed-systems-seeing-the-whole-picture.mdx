@@ -1,0 +1,64 @@
+---
+title: "Observability in Distributed Systems: Seeing the Whole Picture"
+date: "2024-04-20"
+summary: "From 'the system's slow' to pinpoint problem resolution in minutes. How structured logging, Prometheus metrics, Grafana dashboards, and OpenTelemetry tracing turned debugging from guessing into knowing."
+---
+
+It started with a single Slack message:
+
+"The system's slow. Anyone know why?"
+
+No errors in the logs. No alarms going off. Just… slowness. In a monolithic world, we could tail one log file and trace the problem. But in a distributed system with a dozen microservices? It was like chasing a whisper in a storm.
+
+## The Problem
+
+Distributed systems are great for scalability and resilience, but they also create visibility gaps:
+
+- **Requests hop between multiple services**
+- **Failures can hide deep in the chain**
+- **Logs, metrics, and traces live in different places**
+
+Without observability, you're not running a system — you're guessing.
+
+## The Turning Point
+
+We decided to make observability a first-class citizen. No "we'll add it later." From the moment code left the laptop, it would:
+
+- **Emit structured logs** with correlation IDs
+- **Publish metrics to Prometheus** for every critical path
+- **Send traces to Grafana Tempo**, so we could follow a request from start to finish
+
+## Our Stack
+
+- **Prometheus** for metrics: latency, error rate, throughput
+- **Grafana** for visualizing health — from API p95 latency to Kafka consumer lag
+- **OpenTelemetry** for tracing across Python FastAPI services, Kafka consumers, and external calls
+- **Sentry** for error reporting with full context
+
+## The Win
+
+One week after rollout, we got hit with a sudden spike in policy quote failures.
+
+In the old world, we'd guess and redeploy. Now:
+
+- **Grafana showed error rates climbing** for the Pricing Service
+- **Traces revealed calls stalling** at a Redis cache miss
+- **Logs confirmed a misconfigured TTL** in a new feature flag rollout
+
+The fix? A 3-line config change. Problem solved in minutes, not hours.
+
+## Lessons Learned
+
+1. **You can't fix what you can't see.** Logging without correlation is just noise
+2. **Metrics are the pulse.** They tell you when something's off before users notice
+3. **Tracing closes the loop.** It turns "something's wrong" into "it's right there"
+4. **Invest early.** Retrofitting observability is expensive and incomplete
+
+## Final Thought
+
+Observability isn't just for debugging — it's for building trust.
+
+Trust that your system works under pressure.
+Trust that you'll know when it doesn't.
+
+In a distributed world, observability is your compass. Without it, you're just hoping you're heading in the right direction.

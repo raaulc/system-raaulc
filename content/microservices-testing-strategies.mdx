@@ -1,0 +1,607 @@
+---
+title: "Testing Strategies for Microservices: From Unit Tests to Chaos Engineering"
+publishedAt: "2024-09-10"
+summary: "Comprehensive testing approaches for microservices including unit tests, integration tests, contract testing, and chaos engineering"
+tags: ["Testing", "Microservices", "Java", "Spring Boot", "Chaos Engineering", "Backend"]
+---
+
+# Testing Strategies for Microservices: From Unit Tests to Chaos Engineering
+
+Testing microservices requires a multi-layered approach that ensures reliability, performance, and resilience. This guide explores comprehensive testing strategies from unit tests to chaos engineering, with practical examples for Java-based microservices.
+
+![Testing Microservices](/web-developement.jpeg)
+
+## The Testing Pyramid
+
+A well-designed testing strategy follows the testing pyramid:
+- **Unit Tests**: Fast, focused tests for individual components
+- **Integration Tests**: Tests for service interactions
+- **Contract Tests**: API contract validation
+- **End-to-End Tests**: Full system validation
+- **Chaos Engineering**: Resilience testing
+
+## Unit Testing with JUnit 5
+
+### Service Layer Testing
+
+```java
+@ExtendWith(MockitoExtension.class)
+class OddsServiceTest {
+    
+    @Mock
+    private OddsRepository oddsRepository;
+    
+    @Mock
+    private RedisTemplate<String, OddsData> redisTemplate;
+    
+    @Mock
+    private KafkaTemplate<String, OddsEvent> kafkaTemplate;
+    
+    @InjectMocks
+    private OddsService oddsService;
+    
+    @Test
+    @DisplayName("Should return cached odds when available")
+    void shouldReturnCachedOdds() {
+        // Given
+        String eventId = "event-123";
+        OddsData expectedOdds = OddsData.builder()
+            .eventId(eventId)
+            .oddsValue(BigDecimal.valueOf(2.5))
+            .build();
+        
+        when(redisTemplate.opsForValue().get("odds:" + eventId))
+            .thenReturn(expectedOdds);
+        
+        // When
+        OddsData result = oddsService.getCurrentOdds(eventId);
+        
+        // Then
+        assertEquals(expectedOdds, result);
+        verify(oddsRepository, never()).findByEventId(any());
+    }
+    
+    @Test
+    @DisplayName("Should fetch from database and cache when cache miss")
+    void shouldFetchFromDatabaseAndCache() {
+        // Given
+        String eventId = "event-123";
+        OddsData expectedOdds = OddsData.builder()
+            .eventId(eventId)
+            .oddsValue(BigDecimal.valueOf(2.5))
+            .build();
+        
+        when(redisTemplate.opsForValue().get("odds:" + eventId))
+            .thenReturn(null);
+        when(oddsRepository.findByEventId(eventId))
+            .thenReturn(Optional.of(expectedOdds));
+        
+        // When
+        OddsData result = oddsService.getCurrentOdds(eventId);
+        
+        // Then
+        assertEquals(expectedOdds, result);
+        verify(redisTemplate.opsForValue()).set("odds:" + eventId, expectedOdds, Duration.ofMinutes(5));
+    }
+    
+    @Test
+    @DisplayName("Should handle database errors gracefully")
+    void shouldHandleDatabaseErrors() {
+        // Given
+        String eventId = "event-123";
+        when(redisTemplate.opsForValue().get("odds:" + eventId))
+            .thenReturn(null);
+        when(oddsRepository.findByEventId(eventId))
+            .thenThrow(new DatabaseException("Connection failed"));
+        
+        // When & Then
+        assertThrows(ServiceException.class, () -> oddsService.getCurrentOdds(eventId));
+    }
+}
+```
+
+### Controller Testing
+
+```java
+@WebMvcTest(OddsController.class)
+class OddsControllerTest {
+    
+    @Autowired
+    private MockMvc mockMvc;
+    
+    @MockBean
+    private OddsService oddsService;
+    
+    @Test
+    @DisplayName("Should return odds for valid event ID")
+    void shouldReturnOddsForValidEvent() throws Exception {
+        // Given
+        String eventId = "event-123";
+        OddsData odds = OddsData.builder()
+            .eventId(eventId)
+            .oddsValue(BigDecimal.valueOf(2.5))
+            .build();
+        
+        when(oddsService.getCurrentOdds(eventId))
+            .thenReturn(odds);
+        
+        // When & Then
+        mockMvc.perform(get("/api/v1/odds/" + eventId))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.eventId").value(eventId))
+            .andExpect(jsonPath("$.oddsValue").value(2.5));
+    }
+    
+    @Test
+    @DisplayName("Should return 404 for non-existent event")
+    void shouldReturn404ForNonExistentEvent() throws Exception {
+        // Given
+        String eventId = "non-existent";
+        when(oddsService.getCurrentOdds(eventId))
+            .thenThrow(new EventNotFoundException("Event not found"));
+        
+        // When & Then
+        mockMvc.perform(get("/api/v1/odds/" + eventId))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.message").value("Event not found"));
+    }
+}
+```
+
+## Integration Testing
+
+### Database Integration Tests
+
+```java
+@DataJpaTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+class OddsRepositoryIntegrationTest {
+    
+    @Autowired
+    private OddsRepository oddsRepository;
+    
+    @Autowired
+    private TestEntityManager entityManager;
+    
+    @Test
+    @DisplayName("Should save and retrieve odds data")
+    void shouldSaveAndRetrieveOdds() {
+        // Given
+        OddsData odds = OddsData.builder()
+            .eventId("event-123")
+            .oddsValue(BigDecimal.valueOf(2.5))
+            .timestamp(Instant.now())
+            .build();
+        
+        // When
+        OddsData saved = oddsRepository.save(odds);
+        Optional<OddsData> retrieved = oddsRepository.findByEventId("event-123");
+        
+        // Then
+        assertTrue(retrieved.isPresent());
+        assertEquals(BigDecimal.valueOf(2.5), retrieved.get().getOddsValue());
+    }
+    
+    @Test
+    @DisplayName("Should handle concurrent updates")
+    void shouldHandleConcurrentUpdates() throws InterruptedException {
+        // Given
+        String eventId = "event-123";
+        OddsData initialOdds = OddsData.builder()
+            .eventId(eventId)
+            .oddsValue(BigDecimal.valueOf(2.0))
+            .build();
+        
+        oddsRepository.save(initialOdds);
+        
+        // When - Simulate concurrent updates
+        CountDownLatch latch = new CountDownLatch(2);
+        AtomicInteger successCount = new AtomicInteger(0);
+        
+        Thread thread1 = new Thread(() -> {
+            try {
+                oddsRepository.updateOddsValue(eventId, BigDecimal.valueOf(2.5));
+                successCount.incrementAndGet();
+            } finally {
+                latch.countDown();
+            }
+        });
+        
+        Thread thread2 = new Thread(() -> {
+            try {
+                oddsRepository.updateOddsValue(eventId, BigDecimal.valueOf(3.0));
+                successCount.incrementAndGet();
+            } finally {
+                latch.countDown();
+            }
+        });
+        
+        thread1.start();
+        thread2.start();
+        latch.await();
+        
+        // Then
+        assertEquals(2, successCount.get());
+    }
+}
+```
+
+### Kafka Integration Tests
+
+```java
+@SpringBootTest
+@TestPropertySource(properties = {
+    "spring.kafka.bootstrap-servers=localhost:9092",
+    "spring.kafka.consumer.auto-offset-reset=earliest"
+})
+class KafkaIntegrationTest {
+    
+    @Autowired
+    private KafkaTemplate<String, String> kafkaTemplate;
+    
+    @Autowired
+    private OddsEventConsumer oddsEventConsumer;
+    
+    @Test
+    @DisplayName("Should process odds update event")
+    void shouldProcessOddsUpdateEvent() throws Exception {
+        // Given
+        OddsEvent event = OddsEvent.builder()
+            .eventId("event-123")
+            .oddsValue(BigDecimal.valueOf(2.5))
+            .timestamp(Instant.now())
+            .build();
+        
+        String eventJson = objectMapper.writeValueAsString(event);
+        
+        // When
+        kafkaTemplate.send("odds-updates", event.getEventId(), eventJson);
+        
+        // Then - Wait for processing
+        await().atMost(5, TimeUnit.SECONDS)
+            .until(() -> oddsEventConsumer.getProcessedEvents().contains(event.getEventId()));
+    }
+}
+```
+
+## Contract Testing with Pact
+
+### Consumer Contract Tests
+
+```java
+@ExtendWith(PactConsumerTestExt.class)
+@PactTestFor(providerName = "odds-service")
+class OddsServiceContractTest {
+    
+    @Pact(consumer = "betting-service")
+    public RequestResponsePact createPact(PactDslWithProvider builder) {
+        return builder
+            .given("odds exist for event")
+            .uponReceiving("a request for odds")
+            .path("/api/v1/odds/event-123")
+            .method("GET")
+            .willRespondWith()
+            .status(200)
+            .headers(Map.of("Content-Type", "application/json"))
+            .body(new PactDslJsonBody()
+                .stringType("eventId", "event-123")
+                .decimalType("oddsValue", 2.5)
+                .stringType("timestamp", "2024-01-01T12:00:00Z"))
+            .toPact();
+    }
+    
+    @Test
+    @PactTestFor(pactMethod = "createPact")
+    void shouldReturnOddsForEvent(MockServer mockServer) {
+        // Given
+        String url = mockServer.getUrl() + "/api/v1/odds/event-123";
+        
+        // When
+        ResponseEntity<OddsData> response = restTemplate.getForEntity(url, OddsData.class);
+        
+        // Then
+        assertEquals(200, response.getStatusCodeValue());
+        assertEquals("event-123", response.getBody().getEventId());
+        assertEquals(BigDecimal.valueOf(2.5), response.getBody().getOddsValue());
+    }
+}
+```
+
+### Provider Contract Tests
+
+```java
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@PactBroker
+class OddsServiceProviderTest {
+    
+    @LocalState("odds exist for event")
+    void oddsExistForEvent() {
+        // Setup test data
+        oddsRepository.save(OddsData.builder()
+            .eventId("event-123")
+            .oddsValue(BigDecimal.valueOf(2.5))
+            .build());
+    }
+    
+    @Test
+    @PactVerification(fragment = "createPact")
+    void shouldReturnOddsForEvent() {
+        // Test is automatically generated from pact
+    }
+}
+```
+
+## End-to-End Testing
+
+### API End-to-End Tests
+
+```java
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@TestPropertySource(properties = {
+    "spring.profiles.active=test",
+    "kafka.bootstrap-servers=localhost:9092"
+})
+class OddsApiE2ETest {
+    
+    @Autowired
+    private TestRestTemplate restTemplate;
+    
+    @Autowired
+    private OddsRepository oddsRepository;
+    
+    @Test
+    @DisplayName("Should handle complete odds update flow")
+    void shouldHandleCompleteOddsUpdateFlow() {
+        // Given
+        OddsUpdateRequest request = OddsUpdateRequest.builder()
+            .eventId("event-123")
+            .oddsValue(BigDecimal.valueOf(2.5))
+            .build();
+        
+        // When
+        ResponseEntity<Void> response = restTemplate.postForEntity(
+            "/api/v1/odds/update", request, Void.class);
+        
+        // Then
+        assertEquals(202, response.getStatusCodeValue());
+        
+        // Verify database update
+        Optional<OddsData> updatedOdds = oddsRepository.findByEventId("event-123");
+        assertTrue(updatedOdds.isPresent());
+        assertEquals(BigDecimal.valueOf(2.5), updatedOdds.get().getOddsValue());
+        
+        // Verify cache update (would need cache verification logic)
+        // Verify Kafka event (would need event verification logic)
+    }
+}
+```
+
+## Performance Testing
+
+### Load Testing with JMeter
+
+```java
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+class OddsServicePerformanceTest {
+    
+    @Autowired
+    private TestRestTemplate restTemplate;
+    
+    @Test
+    @DisplayName("Should handle high load")
+    void shouldHandleHighLoad() throws InterruptedException {
+        // Given
+        int numberOfRequests = 1000;
+        int concurrentUsers = 50;
+        CountDownLatch latch = new CountDownLatch(numberOfRequests);
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger errorCount = new AtomicInteger(0);
+        
+        // When
+        ExecutorService executor = Executors.newFixedThreadPool(concurrentUsers);
+        
+        for (int i = 0; i < numberOfRequests; i++) {
+            executor.submit(() -> {
+                try {
+                    ResponseEntity<OddsData> response = restTemplate.getForEntity(
+                        "/api/v1/odds/event-" + (i % 100), OddsData.class);
+                    
+                    if (response.getStatusCode().is2xxSuccessful()) {
+                        successCount.incrementAndGet();
+                    } else {
+                        errorCount.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    errorCount.incrementAndGet();
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+        
+        latch.await(30, TimeUnit.SECONDS);
+        executor.shutdown();
+        
+        // Then
+        double successRate = (double) successCount.get() / numberOfRequests;
+        assertTrue(successRate > 0.95, "Success rate should be > 95%");
+    }
+}
+```
+
+## Chaos Engineering
+
+### Chaos Monkey Implementation
+
+```java
+@Component
+public class ChaosMonkey {
+    
+    private final Random random = new Random();
+    
+    @Scheduled(fixedRate = 30000) // Every 30 seconds
+    public void injectChaos() {
+        if (random.nextDouble() < 0.1) { // 10% chance
+            injectLatency();
+        }
+        
+        if (random.nextDouble() < 0.05) { // 5% chance
+            injectException();
+        }
+    }
+    
+    private void injectLatency() {
+        try {
+            Thread.sleep(random.nextInt(1000) + 500); // 500-1500ms
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+    
+    private void injectException() {
+        if (random.nextBoolean()) {
+            throw new RuntimeException("Chaos monkey injected exception");
+        }
+    }
+}
+
+@Component
+public class ChaosMonkeyAspect {
+    
+    @Around("@annotation(ChaosMonkey)")
+    public Object aroundChaosMonkey(ProceedingJoinPoint joinPoint) throws Throwable {
+        // Inject chaos based on configuration
+        if (shouldInjectChaos()) {
+            injectChaos();
+        }
+        
+        return joinPoint.proceed();
+    }
+}
+```
+
+### Resilience Testing
+
+```java
+@SpringBootTest
+class ResilienceTest {
+    
+    @Autowired
+    private OddsService oddsService;
+    
+    @Test
+    @DisplayName("Should handle database failures gracefully")
+    void shouldHandleDatabaseFailures() {
+        // Given - Simulate database failure
+        when(oddsRepository.findByEventId(any()))
+            .thenThrow(new DatabaseException("Connection failed"));
+        
+        // When & Then
+        assertThrows(ServiceException.class, () -> 
+            oddsService.getCurrentOdds("event-123"));
+    }
+    
+    @Test
+    @DisplayName("Should use circuit breaker for external API calls")
+    void shouldUseCircuitBreaker() {
+        // Given - External API is down
+        when(externalApiClient.getOdds(any()))
+            .thenThrow(new RuntimeException("API unavailable"));
+        
+        // When
+        OddsData result = oddsService.getCurrentOdds("event-123");
+        
+        // Then - Should return cached/default data
+        assertNotNull(result);
+        // Verify circuit breaker was used
+    }
+}
+```
+
+## Test Data Management
+
+### Test Data Builders
+
+```java
+public class OddsDataBuilder {
+    
+    private String eventId = "event-123";
+    private BigDecimal oddsValue = BigDecimal.valueOf(2.0);
+    private Instant timestamp = Instant.now();
+    
+    public OddsDataBuilder withEventId(String eventId) {
+        this.eventId = eventId;
+        return this;
+    }
+    
+    public OddsDataBuilder withOddsValue(BigDecimal oddsValue) {
+        this.oddsValue = oddsValue;
+        return this;
+    }
+    
+    public OddsData build() {
+        return OddsData.builder()
+            .eventId(eventId)
+            .oddsValue(oddsValue)
+            .timestamp(timestamp)
+            .build();
+    }
+    
+    public static OddsDataBuilder anOddsData() {
+        return new OddsDataBuilder();
+    }
+}
+```
+
+### Test Containers
+
+```java
+@Testcontainers
+@SpringBootTest
+class OddsServiceWithContainersTest {
+    
+    @Container
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:13")
+        .withDatabaseName("testdb")
+        .withUsername("test")
+        .withPassword("test");
+    
+    @Container
+    static GenericContainer<?> redis = new GenericContainer<>("redis:6-alpine")
+        .withExposedPorts(6379);
+    
+    @Container
+    static KafkaContainer kafka = new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:6.2.1"))
+        .withEmbeddedZookeeper();
+    
+    @DynamicPropertySource
+    static void configureProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.redis.host", redis::getHost);
+        registry.add("spring.redis.port", redis::getMappedPort);
+        registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+    }
+}
+```
+
+## Best Practices
+
+1. **Test Isolation**: Each test should be independent
+2. **Fast Feedback**: Unit tests should run quickly
+3. **Realistic Data**: Use realistic test data
+4. **Test Coverage**: Aim for high coverage but focus on critical paths
+5. **Continuous Testing**: Run tests in CI/CD pipeline
+6. **Monitoring Tests**: Monitor test performance and reliability
+
+## Next Steps
+
+1. Set up test infrastructure with Docker Compose
+2. Implement comprehensive unit tests
+3. Add integration tests for external dependencies
+4. Set up contract testing with Pact
+5. Implement chaos engineering experiments
+6. Add performance testing to CI/CD pipeline
+
+Remember: Testing is not just about finding bugs—it's about building confidence in your system's reliability and performance.
+
+---

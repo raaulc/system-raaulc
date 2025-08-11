@@ -1,0 +1,10 @@
+<svg width="400" height="200" viewBox="0 0 400 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="400" height="200" fill="#1e293b"/>
+  <circle cx="100" cy="100" r="30" fill="#10b981" opacity="0.8"/>
+  <circle cx="200" cy="80" r="25" fill="#3b82f6" opacity="0.8"/>
+  <circle cx="300" cy="120" r="28" fill="#8b5cf6" opacity="0.8"/>
+  <circle cx="150" cy="150" r="20" fill="#f59e0b" opacity="0.8"/>
+  <circle cx="250" cy="60" r="22" fill="#ef4444" opacity="0.8"/>
+  <path d="M80 100 L120 100 M180 80 L220 80 M280 120 L320 120 M130 150 L170 150 M230 60 L270 60" stroke="#64748b" stroke-width="2" opacity="0.6"/>
+  <text x="200" y="190" text-anchor="middle" fill="#f1f5f9" font-family="Arial, sans-serif" font-size="14" font-weight="bold">FastAPI Microservices</text>
+</svg>

@@ -1,0 +1,14 @@
+<svg width="400" height="200" viewBox="0 0 400 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="400" height="200" fill="#0f172a"/>
+  <rect x="50" y="80" width="60" height="40" rx="8" fill="#3b82f6" opacity="0.9"/>
+  <rect x="150" y="60" width="60" height="40" rx="8" fill="#10b981" opacity="0.9"/>
+  <rect x="250" y="100" width="60" height="40" rx="8" fill="#8b5cf6" opacity="0.9"/>
+  <rect x="350" y="80" width="40" height="40" rx="8" fill="#f59e0b" opacity="0.9"/>
+  <path d="M110 100 L150 80 M210 80 L250 120 M310 120 L350 100" stroke="#64748b" stroke-width="3" marker-end="url(#arrowhead)"/>
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+    </marker>
+  </defs>
+  <text x="200" y="190" text-anchor="middle" fill="#f1f5f9" font-family="Arial, sans-serif" font-size="14" font-weight="bold">Event-Driven Architecture</text>
+</svg>

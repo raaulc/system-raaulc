@@ -1,0 +1,637 @@
+---
+title: "System Design for High-Scale Backend Services: Patterns and Best Practices"
+publishedAt: "2024-08-20"
+summary: "Comprehensive guide to designing scalable backend systems with practical patterns for high-concurrency applications"
+tags: ["System Design", "Scalability", "Architecture", "Java", "Microservices", "Backend"]
+---
+
+# System Design for High-Scale Backend Services: Patterns and Best Practices
+
+Building scalable backend systems requires careful consideration of architecture patterns, data flow, and system boundaries. This guide explores essential system design principles and patterns for creating high-performance, scalable services.
+
+![System Design](/web-developement.jpeg)
+
+## System Design Fundamentals
+
+### Scalability Dimensions
+
+When designing scalable systems, consider these dimensions:
+- **Horizontal Scaling**: Adding more machines
+- **Vertical Scaling**: Adding more resources to existing machines
+- **Functional Scaling**: Breaking down by business capabilities
+- **Data Scaling**: Distributing data across multiple databases
+
+### Key Design Principles
+
+1. **Single Responsibility**: Each service has one clear purpose
+2. **Loose Coupling**: Services communicate through well-defined interfaces
+3. **High Cohesion**: Related functionality is grouped together
+4. **Fault Tolerance**: System continues operating despite failures
+5. **Observability**: System behavior is transparent and measurable
+
+## Architecture Patterns
+
+### Microservices Architecture
+
+```java
+// Service boundaries example
+@Service
+public class OddsService {
+    
+    private final OddsRepository oddsRepository;
+    private final CacheService cacheService;
+    private final EventPublisher eventPublisher;
+    
+    public OddsData getCurrentOdds(String eventId) {
+        // Check cache first
+        OddsData cached = cacheService.get("odds:" + eventId);
+        if (cached != null) {
+            return cached;
+        }
+        
+        // Fetch from database
+        OddsData odds = oddsRepository.findByEventId(eventId);
+        if (odds != null) {
+            cacheService.set("odds:" + eventId, odds, Duration.ofMinutes(5));
+        }
+        
+        return odds;
+    }
+    
+    public void updateOdds(String eventId, OddsData newOdds) {
+        // Update database
+        oddsRepository.save(newOdds);
+        
+        // Invalidate cache
+        cacheService.delete("odds:" + eventId);
+        
+        // Publish event
+        eventPublisher.publish(new OddsUpdatedEvent(eventId, newOdds));
+    }
+}
+```
+
+### Event-Driven Architecture
+
+```java
+// Event-driven service example
+@Component
+public class BetProcessingService {
+    
+    private final BetRepository betRepository;
+    private final UserService userService;
+    private final OddsService oddsService;
+    private final EventPublisher eventPublisher;
+    
+    @EventListener
+    public void handleBetPlaced(BetPlacedEvent event) {
+        // Process bet placement
+        Bet bet = event.getBet();
+        
+        // Validate user balance
+        if (!userService.hasSufficientBalance(bet.getUserId(), bet.getStake())) {
+            eventPublisher.publish(new BetRejectedEvent(bet.getId(), "Insufficient balance"));
+            return;
+        }
+        
+        // Validate odds
+        OddsData currentOdds = oddsService.getCurrentOdds(bet.getEventId());
+        if (!currentOdds.getOddsValue().equals(bet.getOdds())) {
+            eventPublisher.publish(new BetRejectedEvent(bet.getId(), "Odds changed"));
+            return;
+        }
+        
+        // Process bet
+        bet.setStatus(BetStatus.CONFIRMED);
+        betRepository.save(bet);
+        
+        // Deduct user balance
+        userService.deductBalance(bet.getUserId(), bet.getStake());
+        
+        // Publish confirmation event
+        eventPublisher.publish(new BetConfirmedEvent(bet));
+    }
+}
+```
+
+## Data Design Patterns
+
+### CQRS (Command Query Responsibility Segregation)
+
+```java
+// Command side
+@Service
+public class OddsCommandService {
+    
+    private final OddsRepository oddsRepository;
+    private final EventStore eventStore;
+    
+    public void updateOdds(UpdateOddsCommand command) {
+        // Validate command
+        validateCommand(command);
+        
+        // Create event
+        OddsUpdatedEvent event = new OddsUpdatedEvent(
+            command.getEventId(),
+            command.getNewOdds(),
+            Instant.now()
+        );
+        
+        // Store event
+        eventStore.append("odds", command.getEventId(), event);
+        
+        // Update read model
+        updateReadModel(command);
+    }
+    
+    private void updateReadModel(UpdateOddsCommand command) {
+        OddsData odds = oddsRepository.findByEventId(command.getEventId())
+            .orElse(new OddsData());
+        
+        odds.setEventId(command.getEventId());
+        odds.setOddsValue(command.getNewOdds());
+        odds.setLastUpdated(Instant.now());
+        
+        oddsRepository.save(odds);
+    }
+}
+
+// Query side
+@Service
+public class OddsQueryService {
+    
+    private final OddsRepository oddsRepository;
+    private final CacheService cacheService;
+    
+    public OddsData getCurrentOdds(String eventId) {
+        // Try cache first
+        OddsData cached = cacheService.get("odds:" + eventId);
+        if (cached != null) {
+            return cached;
+        }
+        
+        // Query read model
+        OddsData odds = oddsRepository.findByEventId(eventId).orElse(null);
+        if (odds != null) {
+            cacheService.set("odds:" + eventId, odds, Duration.ofMinutes(5));
+        }
+        
+        return odds;
+    }
+    
+    public List<OddsData> getOddsForEvents(List<String> eventIds) {
+        return oddsRepository.findByEventIdIn(eventIds);
+    }
+}
+```
+
+### Event Sourcing
+
+```java
+@Entity
+@Table(name = "event_store")
+public class EventStore {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "aggregate_id")
+    private String aggregateId;
+    
+    @Column(name = "event_type")
+    private String eventType;
+    
+    @Column(name = "event_data", columnDefinition = "TEXT")
+    private String eventData;
+    
+    @Column(name = "version")
+    private Long version;
+    
+    @Column(name = "timestamp")
+    private Instant timestamp;
+}
+
+@Service
+public class EventSourcingService {
+    
+    private final EventStoreRepository eventStoreRepository;
+    private final ObjectMapper objectMapper;
+    
+    public void appendEvent(String aggregateId, String eventType, Object eventData) {
+        EventStore event = new EventStore();
+        event.setAggregateId(aggregateId);
+        event.setEventType(eventType);
+        event.setEventData(objectMapper.writeValueAsString(eventData));
+        event.setTimestamp(Instant.now());
+        
+        // Get next version
+        Long currentVersion = eventStoreRepository
+            .findMaxVersionByAggregateId(aggregateId)
+            .orElse(0L);
+        event.setVersion(currentVersion + 1);
+        
+        eventStoreRepository.save(event);
+    }
+    
+    public List<EventStore> getEvents(String aggregateId) {
+        return eventStoreRepository.findByAggregateIdOrderByVersion(aggregateId);
+    }
+    
+    public <T> T reconstructAggregate(String aggregateId, Class<T> aggregateClass) {
+        List<EventStore> events = getEvents(aggregateId);
+        
+        T aggregate = createEmptyAggregate(aggregateClass);
+        
+        for (EventStore event : events) {
+            Object eventData = objectMapper.readValue(event.getEventData(), Object.class);
+            applyEvent(aggregate, eventData);
+        }
+        
+        return aggregate;
+    }
+}
+```
+
+## Scalability Patterns
+
+### Database Sharding
+
+```java
+// Sharding strategy
+@Component
+public class ShardingStrategy {
+    
+    private final int numberOfShards = 16;
+    
+    public String getShardKey(String eventId) {
+        int hash = eventId.hashCode();
+        int shardIndex = Math.abs(hash) % numberOfShards;
+        return "shard_" + shardIndex;
+    }
+    
+    public String getDatabaseUrl(String eventId) {
+        String shardKey = getShardKey(eventId);
+        return getDatabaseUrlForShard(shardKey);
+    }
+}
+
+@Service
+public class ShardedOddsService {
+    
+    private final Map<String, OddsRepository> shardRepositories;
+    private final ShardingStrategy shardingStrategy;
+    
+    public OddsData getCurrentOdds(String eventId) {
+        String shardKey = shardingStrategy.getShardKey(eventId);
+        OddsRepository repository = shardRepositories.get(shardKey);
+        
+        return repository.findByEventId(eventId).orElse(null);
+    }
+    
+    public void updateOdds(String eventId, OddsData odds) {
+        String shardKey = shardingStrategy.getShardKey(eventId);
+        OddsRepository repository = shardRepositories.get(shardKey);
+        
+        repository.save(odds);
+    }
+}
+```
+
+### Caching Strategies
+
+```java
+// Multi-level caching
+@Service
+public class MultiLevelCacheService {
+    
+    private final L1Cache l1Cache; // In-memory cache
+    private final L2Cache l2Cache; // Redis cache
+    private final DatabaseService databaseService;
+    
+    public OddsData getOdds(String eventId) {
+        // L1 cache (fastest)
+        OddsData l1Result = l1Cache.get(eventId);
+        if (l1Result != null) {
+            return l1Result;
+        }
+        
+        // L2 cache
+        OddsData l2Result = l2Cache.get(eventId);
+        if (l2Result != null) {
+            l1Cache.set(eventId, l2Result, Duration.ofMinutes(1));
+            return l2Result;
+        }
+        
+        // Database
+        OddsData dbResult = databaseService.getOdds(eventId);
+        if (dbResult != null) {
+            l2Cache.set(eventId, dbResult, Duration.ofMinutes(5));
+            l1Cache.set(eventId, dbResult, Duration.ofMinutes(1));
+        }
+        
+        return dbResult;
+    }
+}
+
+// Write-through cache
+@Service
+public class WriteThroughCacheService {
+    
+    private final CacheService cacheService;
+    private final DatabaseService databaseService;
+    
+    public void updateOdds(String eventId, OddsData odds) {
+        // Update database first
+        databaseService.updateOdds(eventId, odds);
+        
+        // Update cache immediately
+        cacheService.set("odds:" + eventId, odds, Duration.ofMinutes(5));
+    }
+    
+    public void deleteOdds(String eventId) {
+        // Delete from database
+        databaseService.deleteOdds(eventId);
+        
+        // Invalidate cache
+        cacheService.delete("odds:" + eventId);
+    }
+}
+```
+
+## Performance Optimization
+
+### Connection Pooling
+
+```java
+@Configuration
+public class DatabaseConfig {
+    
+    @Bean
+    public DataSource dataSource() {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:postgresql://localhost:5432/odds_db");
+        config.setUsername("user");
+        config.setPassword("password");
+        config.setMaximumPoolSize(20);
+        config.setMinimumIdle(5);
+        config.setConnectionTimeout(30000);
+        config.setIdleTimeout(600000);
+        config.setMaxLifetime(1800000);
+        
+        return new HikariDataSource(config);
+    }
+}
+
+// Redis connection pooling
+@Configuration
+public class RedisConfig {
+    
+    @Bean
+    public RedisConnectionFactory redisConnectionFactory() {
+        LettuceConnectionFactory factory = new LettuceConnectionFactory();
+        factory.setHostName("localhost");
+        factory.setPort(6379);
+        factory.setDatabase(0);
+        factory.setTimeout(Duration.ofSeconds(5));
+        
+        // Connection pool configuration
+        GenericObjectPoolConfig<?> poolConfig = new GenericObjectPoolConfig<>();
+        poolConfig.setMaxTotal(20);
+        poolConfig.setMaxIdle(10);
+        poolConfig.setMinIdle(5);
+        
+        return factory;
+    }
+}
+```
+
+### Asynchronous Processing
+
+```java
+@Service
+public class AsyncOddsService {
+    
+    private final AsyncTaskExecutor taskExecutor;
+    private final OddsRepository oddsRepository;
+    private final EventPublisher eventPublisher;
+    
+    @Async
+    public CompletableFuture<Void> processOddsUpdate(OddsUpdateRequest request) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                // Process odds update
+                OddsData odds = oddsRepository.findByEventId(request.getEventId())
+                    .orElse(new OddsData());
+                
+                odds.setOddsValue(request.getNewOdds());
+                odds.setLastUpdated(Instant.now());
+                
+                oddsRepository.save(odds);
+                
+                // Publish event
+                eventPublisher.publish(new OddsUpdatedEvent(request.getEventId(), odds));
+                
+            } catch (Exception e) {
+                log.error("Error processing odds update", e);
+                throw new RuntimeException("Failed to process odds update", e);
+            }
+        }, taskExecutor);
+    }
+    
+    @Async
+    public CompletableFuture<List<OddsData>> batchGetOdds(List<String> eventIds) {
+        return CompletableFuture.supplyAsync(() -> {
+            return oddsRepository.findByEventIdIn(eventIds);
+        }, taskExecutor);
+    }
+}
+```
+
+## Monitoring and Observability
+
+### Distributed Tracing
+
+```java
+@Component
+public class TracingInterceptor implements HandlerInterceptor {
+    
+    @Override
+    public boolean preHandle(HttpServletRequest request, 
+                           HttpServletResponse response, 
+                           Object handler) {
+        String traceId = UUID.randomUUID().toString();
+        MDC.put("traceId", traceId);
+        response.setHeader("X-Trace-ID", traceId);
+        
+        // Start span
+        Span span = tracer.buildSpan("http_request")
+            .withTag("http.url", request.getRequestURI())
+            .withTag("http.method", request.getMethod())
+            .start();
+        
+        request.setAttribute("span", span);
+        return true;
+    }
+    
+    @Override
+    public void afterCompletion(HttpServletRequest request, 
+                              HttpServletResponse response, 
+                              Object handler, 
+                              Exception ex) {
+        Span span = (Span) request.getAttribute("span");
+        if (span != null) {
+            span.setTag("http.status_code", response.getStatus());
+            if (ex != null) {
+                span.setTag("error", true);
+                span.log(Map.of("error.object", ex));
+            }
+            span.finish();
+        }
+    }
+}
+```
+
+### Metrics Collection
+
+```java
+@Component
+public class OddsMetricsService {
+    
+    private final MeterRegistry meterRegistry;
+    
+    public void recordOddsRequest(String eventId, boolean cacheHit) {
+        Counter.builder("odds.requests")
+            .tag("event_id", eventId)
+            .tag("cache_hit", String.valueOf(cacheHit))
+            .register(meterRegistry)
+            .increment();
+    }
+    
+    public void recordOddsUpdate(String eventId, BigDecimal oddsValue) {
+        Timer.Sample sample = Timer.start(meterRegistry);
+        
+        // Perform update
+        // ...
+        
+        sample.stop(Timer.builder("odds.update.duration")
+            .tag("event_id", eventId)
+            .register(meterRegistry));
+    }
+    
+    @Scheduled(fixedRate = 60000) // Every minute
+    public void logMetrics() {
+        Timer updateTimer = meterRegistry.timer("odds.update.duration");
+        log.info("Average update time: {}ms", updateTimer.mean(TimeUnit.MILLISECONDS));
+        
+        Counter requestCounter = meterRegistry.counter("odds.requests");
+        log.info("Total requests: {}", requestCounter.count());
+    }
+}
+```
+
+## Fault Tolerance Patterns
+
+### Circuit Breaker
+
+```java
+@Service
+public class CircuitBreakerOddsService {
+    
+    private final CircuitBreaker circuitBreaker;
+    private final ExternalOddsApi externalApi;
+    
+    public OddsData getExternalOdds(String eventId) {
+        return circuitBreaker.runSupplier(() -> {
+            return externalApi.getOdds(eventId);
+        });
+    }
+    
+    @CircuitBreaker(name = "external-odds-api", fallbackMethod = "getFallbackOdds")
+    public OddsData getOddsWithFallback(String eventId) {
+        return externalApi.getOdds(eventId);
+    }
+    
+    public OddsData getFallbackOdds(String eventId, Exception ex) {
+        log.warn("Using fallback for event: {}", eventId, ex);
+        return getCachedOdds(eventId);
+    }
+}
+
+// Circuit breaker configuration
+@Configuration
+public class CircuitBreakerConfig {
+    
+    @Bean
+    public CircuitBreakerRegistry circuitBreakerRegistry() {
+        CircuitBreakerConfig config = CircuitBreakerConfig.custom()
+            .failureRateThreshold(50)
+            .waitDurationInOpenState(Duration.ofSeconds(60))
+            .ringBufferSizeInHalfOpenState(2)
+            .ringBufferSizeInClosedState(10)
+            .build();
+        
+        return CircuitBreakerRegistry.of(config);
+    }
+}
+```
+
+### Retry Pattern
+
+```java
+@Service
+public class RetryOddsService {
+    
+    private final OddsRepository oddsRepository;
+    private final RetryTemplate retryTemplate;
+    
+    public OddsData getOddsWithRetry(String eventId) {
+        return retryTemplate.execute(context -> {
+            return oddsRepository.findByEventId(eventId)
+                .orElseThrow(() -> new DataAccessException("Event not found"));
+        });
+    }
+}
+
+@Configuration
+public class RetryConfig {
+    
+    @Bean
+    public RetryTemplate retryTemplate() {
+        RetryTemplate retryTemplate = new RetryTemplate();
+        
+        FixedBackOffPolicy backOffPolicy = new FixedBackOffPolicy();
+        backOffPolicy.setBackOffPeriod(1000); // 1 second
+        
+        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy();
+        retryPolicy.setMaxAttempts(3);
+        
+        retryTemplate.setBackOffPolicy(backOffPolicy);
+        retryTemplate.setRetryPolicy(retryPolicy);
+        
+        return retryTemplate;
+    }
+}
+```
+
+## Best Practices
+
+1. **Design for Failure**: Assume components will fail
+2. **Use Appropriate Data Structures**: Choose the right database for your use case
+3. **Implement Caching Strategically**: Cache at multiple levels
+4. **Monitor Everything**: Collect metrics and traces
+5. **Test at Scale**: Use load testing and chaos engineering
+6. **Document Your Architecture**: Keep design decisions documented
+
+## Next Steps
+
+1. Analyze your current system's bottlenecks
+2. Implement monitoring and observability
+3. Add caching layers where appropriate
+4. Design for horizontal scaling
+5. Implement fault tolerance patterns
+6. Create comprehensive testing strategies
+
+Remember: System design is iterative. Start simple and evolve based on actual usage patterns and performance requirements.
+
+---
